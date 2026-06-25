@@ -22,11 +22,6 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-// Hoist mock classes before imports so vi.mock can use them. We mock KubeObject/namespace
-// (rather than importing the real ones) to avoid a circular-import ordering issue in the
-// lib/k8s barrel when these modules are loaded first by a unit test. The mock Namespace
-// mirrors the production isProtected() behavior (protected namespace list + label-or-name
-// check) and can diverge if src/lib/k8s/namespace.ts changes.
 const { MockKubeObject, MockNamespace } = vi.hoisted(() => {
   class MockKubeObject {
     jsonData: any;
@@ -80,14 +75,8 @@ vi.mock('../../../lib/k8s/pod', () => ({
   default: class Pod extends MockKubeObject {},
 }));
 
-// Render the children unconditionally so we don't depend on the async authorization query.
-vi.mock('./AuthVisible', () => ({
-  __esModule: true,
-  default: ({ children }: any) => <>{children}</>,
-}));
-
 import { TestContext } from '../../../test';
-import DeleteButton from './DeleteButton';
+import DeleteMultipleButton from './DeleteMultipleButton';
 
 function makeNamespace(metadata: Record<string, any>) {
   return new (MockNamespace as any)({
@@ -98,88 +87,72 @@ function makeNamespace(metadata: Record<string, any>) {
   });
 }
 
-function renderButton(item: any) {
+function renderButton(items: any) {
   return render(
     <TestContext>
-      <DeleteButton item={item} />
+      <DeleteMultipleButton items={items} />
     </TestContext>
   );
 }
 
-// Opens the confirm dialog by clicking the Delete button and returns the dialog element.
+// Opens the confirm dialog by clicking the Delete items button and returns the dialog element.
 async function openDialog() {
-  fireEvent.click(await screen.findByLabelText('translation|Delete'));
+  fireEvent.click(await screen.findByLabelText('translation|Delete items'));
   return await screen.findByRole('dialog');
 }
 
-describe('DeleteButton', () => {
-  it('renders nothing when no item is provided', () => {
+describe('DeleteMultipleButton', () => {
+  it('renders nothing when no items are provided', () => {
     const { container } = renderButton(undefined);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('shows the warning and type-to-confirm field for a protected namespace', async () => {
-    renderButton(makeNamespace({ name: 'kube-system' }));
+  it('shows the warning and type-to-confirm field when protected namespaces are included', async () => {
+    renderButton([makeNamespace({ name: 'kube-system' }), makeNamespace({ name: 'my-app' })]);
     const dialog = await openDialog();
 
     expect(
       within(dialog).getByText(
-        'translation|This is a system namespace. Deleting it may break your cluster.'
+        'translation|Your selection includes system namespaces. Deleting them may break your cluster.'
       )
     ).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('translation|Namespace name')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('translation|Namespace name(s)')).toBeInTheDocument();
   });
 
-  it('keeps Confirm disabled until the exact protected namespace name is typed', async () => {
-    renderButton(makeNamespace({ name: 'kube-system' }));
+  it('keeps Confirm disabled until the normalized input matches every protected namespace', async () => {
+    renderButton([
+      makeNamespace({ name: 'kube-system' }),
+      makeNamespace({ name: 'default' }),
+      makeNamespace({ name: 'my-app' }),
+    ]);
     const dialog = await openDialog();
 
     const confirmButton = within(dialog).getByLabelText('confirm-button');
-    const input = within(dialog).getByLabelText('translation|Namespace name');
+    const input = within(dialog).getByLabelText('translation|Namespace name(s)');
 
     expect(confirmButton).toBeDisabled();
 
-    // Wrong value keeps it disabled.
-    fireEvent.change(input, { target: { value: 'kube' } });
-    expect(confirmButton).toBeDisabled();
-
-    // Correct value (surrounding whitespace is trimmed) enables it.
-    fireEvent.change(input, { target: { value: '  kube-system  ' } });
-    await waitFor(() => expect(confirmButton).toBeEnabled());
-  });
-
-  it('uses the kubernetes.io/metadata.name label (not metadata.name) for the confirm value', async () => {
-    // Protection is decided by the label, so the confirmation must match that same value.
-    renderButton(
-      makeNamespace({
-        name: 'renamed-object',
-        labels: { 'kubernetes.io/metadata.name': 'kube-system' },
-      })
-    );
-    const dialog = await openDialog();
-
-    const confirmButton = within(dialog).getByLabelText('confirm-button');
-    const input = within(dialog).getByLabelText('translation|Namespace name');
-
-    // The object's metadata.name should NOT unlock deletion.
-    fireEvent.change(input, { target: { value: 'renamed-object' } });
-    expect(confirmButton).toBeDisabled();
-
-    // The label value is what enables it.
+    // A single protected name is not enough while another remains unconfirmed.
     fireEvent.change(input, { target: { value: 'kube-system' } });
+    expect(confirmButton).toBeDisabled();
+
+    // Both names, in any order and with extra whitespace, enable Confirm.
+    fireEvent.change(input, { target: { value: '  default ,  kube-system  ' } });
     await waitFor(() => expect(confirmButton).toBeEnabled());
   });
 
-  it('keeps the standard single-confirmation flow for a non-protected namespace', async () => {
-    renderButton(makeNamespace({ name: 'my-app' }));
+  it('keeps the standard flow (no warning or field) when no protected namespaces are included', async () => {
+    renderButton([makeNamespace({ name: 'my-app' }), makeNamespace({ name: 'team-b' })]);
     const dialog = await openDialog();
 
     expect(
       within(dialog).queryByText(
-        'translation|This is a system namespace. Deleting it may break your cluster.'
+        'translation|Your selection includes system namespaces. Deleting them may break your cluster.'
       )
     ).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('translation|Namespace name')).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByLabelText('translation|Namespace name(s)')
+    ).not.toBeInTheDocument();
 
     // Confirm is enabled right away — no type-to-confirm step.
     expect(within(dialog).getByLabelText('confirm-button')).toBeEnabled();

@@ -97,7 +97,10 @@ export default function DeleteButton(props: DeleteButtonProps) {
   }
 
   // System namespaces require an extra type-to-confirm step before they can be deleted.
-  const isProtectedNamespace = item instanceof Namespace && item.isProtected();
+  const isProtectedNamespace =
+    item.kind === Namespace.kind &&
+    typeof (item as any).isProtected === 'function' &&
+    (item as any).isProtected();
   // Use the same label-or-name value that isProtected() checks so the confirmation prompt matches.
   const namespaceName = item.metadata.labels?.['kubernetes.io/metadata.name'] ?? item.metadata.name;
 
