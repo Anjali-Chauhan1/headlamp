@@ -50,8 +50,6 @@ const createMockItem = (name: string, namespace: string = 'default', kind: strin
     _class: () => ({ apiName: kind.toLowerCase() + 's', apiVersion: 'v1' }),
   } as unknown as KubeObject);
 
-// Builds a real Namespace instance (needed so the `instanceof Namespace` /
-// isProtected() checks in DeleteButton apply) with authorization stubbed allowed.
 const createMockNamespace = (name: string) => {
   const ns = new Namespace({
     kind: 'Namespace',
